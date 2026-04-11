@@ -1,0 +1,25 @@
+@import url('https://fonts.googleapis.com/css2?family=Chivo:wght@400;600;700&family=IBM+Plex+Mono:wght@500;700&display=swap');
+
+:root {
+  --text: #102a43;
+  --muted: #486581;
+  --border: #d9e2ec;
+  --card: rgba(255, 255, 255, 0.88);
+  --sans: 'Chivo', 'Trebuchet MS', sans-serif;
+  --mono: 'IBM Plex Mono', 'Courier New', monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--sans);
+  color: var(--text);
+  background:
+    radial-gradient(circle at 12% 8%, rgba(31, 122, 140, 0.22), transparent 35%),
+    radial-gradient(circle at 86% 90%, rgba(16, 42, 67, 0.2), transparent 34%),
+    linear-gradient(160deg, #f4f8fb 0%, #eef4f8 52%, #f9fcff 100%);
+  min-height: 100svh;
+}
