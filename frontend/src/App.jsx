@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { authApi, leadApi } from './api'
+import { aiApi, authApi, leadApi } from './api'
 import './App.css'
 
 function App() {
@@ -10,6 +10,15 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [leads, setLeads] = useState([])
   const [metrics, setMetrics] = useState({ total_value: 0, won_value: 0, conversion_rate: 0 })
+  const [aiInsights, setAiInsights] = useState({
+    summary: { lead_count: 0, average_win_probability: 0, expected_revenue: 0, forecast_gap: 0 },
+    top_opportunities: [],
+    at_risk: [],
+  })
+  const [aiPrompt, setAiPrompt] = useState('')
+  const [aiReply, setAiReply] = useState('')
+  const [aiChatBusy, setAiChatBusy] = useState(false)
+  const [aiChatError, setAiChatError] = useState('')
 
   const [loginForm, setLoginForm] = useState({ username: '', password: '' })
   const [leadForm, setLeadForm] = useState({
@@ -40,9 +49,20 @@ function App() {
   }
 
   const loadData = async () => {
-    const [leadResponse, dashboardResponse] = await Promise.all([leadApi.list(), leadApi.dashboard()])
+    const [leadResponse, dashboardResponse, aiResponse] = await Promise.all([
+      leadApi.list(),
+      leadApi.dashboard(),
+      aiApi.overview(),
+    ])
     setLeads(leadResponse.items || [])
     setMetrics(dashboardResponse.metrics || { total_value: 0, won_value: 0, conversion_rate: 0 })
+    setAiInsights(
+      aiResponse || {
+        summary: { lead_count: 0, average_win_probability: 0, expected_revenue: 0, forecast_gap: 0 },
+        top_opportunities: [],
+        at_risk: [],
+      },
+    )
   }
 
   useEffect(() => {
@@ -141,6 +161,23 @@ function App() {
       })
     } finally {
       setBusy(false)
+    }
+  }
+
+  const onAskAi = async (event) => {
+    event.preventDefault()
+    const prompt = aiPrompt.trim()
+    if (!prompt) return
+
+    setAiChatBusy(true)
+    setAiChatError('')
+    try {
+      const response = await aiApi.chat(prompt)
+      setAiReply(response.reply || '')
+    } catch (error) {
+      setAiChatError(error.message || 'Could not fetch AI response')
+    } finally {
+      setAiChatBusy(false)
     }
   }
 
@@ -259,6 +296,87 @@ function App() {
           <h2>Conversion Rate</h2>
           <p>{metrics.conversion_rate || conversionRate}%</p>
         </article>
+      </section>
+
+      <section className="panel">
+        <h2>AI Revenue Forecast</h2>
+        <div className="ai-summary-grid">
+          <article className="ai-chip">
+            <span>Expected Revenue</span>
+            <strong>{toMoney(aiInsights.summary.expected_revenue || 0)}</strong>
+          </article>
+          <article className="ai-chip">
+            <span>Avg Win Probability</span>
+            <strong>{aiInsights.summary.average_win_probability || 0}%</strong>
+          </article>
+          <article className="ai-chip">
+            <span>Forecast Gap</span>
+            <strong>{toMoney(aiInsights.summary.forecast_gap || 0)}</strong>
+          </article>
+        </div>
+      </section>
+
+      <section className="two-col">
+        <article className="panel">
+          <h2>AI Top Opportunities</h2>
+          <ul className="ai-list">
+            {aiInsights.top_opportunities.map((item) => (
+              <li key={`op-${item.lead_id}`}>
+                <div>
+                  <strong>{item.company_name}</strong>
+                  <span className={`risk-pill ${item.risk_level}`}>{item.risk_level} risk</span>
+                </div>
+                <p>
+                  Win {item.win_probability}% • Expected {toMoney(item.expected_value)}
+                </p>
+                <small>{item.next_action}</small>
+              </li>
+            ))}
+          </ul>
+        </article>
+
+        <article className="panel">
+          <h2>AI Follow-Up Priorities</h2>
+          <ul className="ai-list">
+            {aiInsights.at_risk.map((item) => (
+              <li key={`risk-${item.lead_id}`}>
+                <div>
+                  <strong>{item.company_name}</strong>
+                  <span className={`risk-pill ${item.risk_level}`}>{item.risk_level} risk</span>
+                </div>
+                <p>
+                  Stage: {item.stage} • Last touch: {item.days_since_touch == null ? 'N/A' : `${item.days_since_touch}d ago`}
+                </p>
+                <small>{item.next_action}</small>
+              </li>
+            ))}
+          </ul>
+        </article>
+      </section>
+
+      <section className="panel">
+        <h2>Local AI Assistant (Ollama)</h2>
+        <form className="ai-chat-form" onSubmit={onAskAi}>
+          <label>
+            Ask for help with follow-up strategy, risk review, or message drafting
+            <textarea
+              rows="3"
+              value={aiPrompt}
+              onChange={(event) => setAiPrompt(event.target.value)}
+              placeholder="Example: Draft a follow-up email for high-value leads stuck in negotiation"
+            />
+          </label>
+          <button className="cta" disabled={aiChatBusy} type="submit">
+            {aiChatBusy ? 'Thinking...' : 'Ask Local AI'}
+          </button>
+        </form>
+        {aiChatError && <p className="error">{aiChatError}</p>}
+        {aiReply && (
+          <article className="ai-reply">
+            <h3>Assistant Reply</h3>
+            <p>{aiReply}</p>
+          </article>
+        )}
       </section>
 
       <section className="panel">

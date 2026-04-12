@@ -1,13 +1,87 @@
 import json
+import os
+from urllib import error, request as urllib_request
 from datetime import datetime
 
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, JsonResponse
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 
 from .models import Lead, LeadNote, Reminder
+
+
+STAGE_PROBABILITY = {
+    Lead.STAGE_NEW: 0.12,
+    Lead.STAGE_QUALIFIED: 0.28,
+    Lead.STAGE_PROPOSAL: 0.46,
+    Lead.STAGE_NEGOTIATION: 0.66,
+    Lead.STAGE_WON: 1.0,
+    Lead.STAGE_LOST: 0.02,
+}
+
+
+def _clamp(value: float, lower: float, upper: float):
+    return max(lower, min(upper, value))
+
+
+def build_lead_ai_insight(lead: Lead, note_count: int = 0, open_reminders: int = 0):
+    now_date = timezone.now().date()
+    days_since_touch = (now_date - lead.last_touch).days if lead.last_touch else 999
+    base_prob = STAGE_PROBABILITY.get(lead.stage, 0.2)
+
+    value = float(lead.estimated_value or 0)
+    value_bonus = 0.08 if value >= 100000 else 0.03 if value >= 25000 else 0.0
+    activity_bonus = min(note_count, 5) * 0.015
+    stale_penalty = 0.22 if days_since_touch > 14 else 0.1 if days_since_touch > 7 else 0.0
+    reminder_penalty = min(open_reminders, 4) * 0.02
+
+    notes_text = (lead.notes or "").lower()
+    positive_signals = ["budget", "approved", "signed", "pilot", "interested", "urgent"]
+    risk_signals = ["delay", "silent", "no response", "price", "blocked", "later"]
+
+    text_bonus = 0.05 if any(token in notes_text for token in positive_signals) else 0.0
+    text_penalty = 0.08 if any(token in notes_text for token in risk_signals) else 0.0
+
+    win_probability = _clamp(
+        base_prob + value_bonus + activity_bonus + text_bonus - stale_penalty - reminder_penalty - text_penalty,
+        0.03,
+        0.99,
+    )
+    ai_score = round(win_probability * 100)
+
+    if lead.stage in [Lead.STAGE_WON, Lead.STAGE_LOST]:
+        next_action = "Archive outcome and capture lessons learned"
+    elif days_since_touch > 14:
+        next_action = "High urgency: schedule a call within 24h"
+    elif lead.stage in [Lead.STAGE_PROPOSAL, Lead.STAGE_NEGOTIATION]:
+        next_action = "Send a concise value recap and close-date proposal"
+    elif lead.stage == Lead.STAGE_QUALIFIED:
+        next_action = "Book discovery meeting and confirm budget/timeline"
+    else:
+        next_action = "Run qualification checklist and identify decision maker"
+
+    risk_level = "high" if ai_score < 35 else "medium" if ai_score < 65 else "low"
+    expected_value = round(value * win_probability, 2)
+    recommended_follow_up_days = 1 if risk_level == "high" else 3 if risk_level == "medium" else 5
+
+    return {
+        "lead_id": lead.id,
+        "company_name": lead.company_name,
+        "stage": lead.stage,
+        "estimated_value": value,
+        "expected_value": expected_value,
+        "win_probability": round(win_probability * 100, 1),
+        "ai_score": ai_score,
+        "risk_level": risk_level,
+        "days_since_touch": days_since_touch if lead.last_touch else None,
+        "open_reminders": open_reminders,
+        "activity_count": note_count,
+        "next_action": next_action,
+        "recommended_follow_up_days": recommended_follow_up_days,
+    }
 
 
 def parse_json_body(request: HttpRequest):
@@ -15,6 +89,77 @@ def parse_json_body(request: HttpRequest):
         return json.loads(request.body.decode("utf-8")) if request.body else {}
     except (json.JSONDecodeError, UnicodeDecodeError):
         return None
+
+
+def _call_ollama(prompt: str):
+    ollama_base = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+    preferred_model = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:3b")
+    ollama_timeout = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "90"))
+    generation_options = {
+        "temperature": 0.2,
+        "num_predict": 180,
+    }
+
+    candidates = [
+        (
+            f"{ollama_base.rstrip('/')}/api/generate",
+            {
+                "model": preferred_model,
+                "prompt": prompt,
+                "stream": False,
+                "options": generation_options,
+            },
+            "response",
+        ),
+        (
+            f"{ollama_base.rstrip('/')}/api/chat",
+            {
+                "model": preferred_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+                "options": generation_options,
+            },
+            "message.content",
+        ),
+    ]
+
+    last_error = None
+    for ollama_url, payload, response_field in candidates:
+        encoded_payload = json.dumps(payload).encode("utf-8")
+        req = urllib_request.Request(
+            ollama_url,
+            data=encoded_payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with urllib_request.urlopen(req, timeout=ollama_timeout) as resp:
+                body = resp.read().decode("utf-8")
+                data = json.loads(body)
+        except error.HTTPError as exc:
+            last_error = f"{ollama_url} returned HTTP {exc.code}"
+            if exc.code == 404:
+                continue
+            return None, f"Could not use Ollama at {ollama_url}: HTTP {exc.code}"
+        except error.URLError as exc:
+            return None, f"Could not reach Ollama at {ollama_url}: {exc.reason}"
+        except TimeoutError:
+            return None, "Ollama request timed out."
+        except json.JSONDecodeError:
+            return None, "Ollama returned non-JSON response."
+
+        if response_field == "response":
+            response_text = (data or {}).get("response", "").strip()
+        else:
+            response_text = ((data or {}).get("message") or {}).get("content", "").strip()
+
+        if response_text:
+            return response_text, None
+
+        last_error = f"{ollama_url} returned empty response"
+
+    return None, last_error or "Ollama did not return a valid response."
 
 
 def serialize_lead(lead: Lead):
@@ -253,5 +398,94 @@ def dashboard_view(request: HttpRequest):
             "pipeline": pipeline,
             "reminders": [serialize_reminder(item) for item in reminders],
             "activity": [serialize_note(item) for item in notes],
+        }
+    )
+
+
+@require_GET
+def ai_insights_view(_request: HttpRequest):
+    leads = list(Lead.objects.prefetch_related("activity_notes", "reminders").all())
+    lead_insights = []
+
+    for lead in leads:
+        note_count = lead.activity_notes.count()
+        open_reminders = lead.reminders.filter(is_done=False).count()
+        lead_insights.append(build_lead_ai_insight(lead, note_count=note_count, open_reminders=open_reminders))
+
+    ranked = sorted(lead_insights, key=lambda item: item["ai_score"], reverse=True)
+    at_risk = sorted(
+        [item for item in lead_insights if item["risk_level"] != "low"],
+        key=lambda item: item["ai_score"],
+    )
+
+    total_expected_revenue = round(sum(item["expected_value"] for item in lead_insights), 2)
+    total_pipeline_value = round(sum(item["estimated_value"] for item in lead_insights), 2)
+
+    avg_win_probability = 0.0
+    if lead_insights:
+        avg_win_probability = round(
+            sum(item["win_probability"] for item in lead_insights) / len(lead_insights),
+            1,
+        )
+
+    return JsonResponse(
+        {
+            "summary": {
+                "lead_count": len(lead_insights),
+                "average_win_probability": avg_win_probability,
+                "expected_revenue": total_expected_revenue,
+                "pipeline_value": total_pipeline_value,
+                "forecast_gap": round(total_pipeline_value - total_expected_revenue, 2),
+            },
+            "top_opportunities": ranked[:5],
+            "at_risk": at_risk[:5],
+            "all": ranked,
+        }
+    )
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def ai_chat_view(request: HttpRequest):
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON payload."}, status=400)
+
+    user_prompt = (data.get("prompt") or "").strip()
+    if not user_prompt:
+        return JsonResponse({"detail": "prompt is required."}, status=400)
+
+    lead_context = []
+    for lead in Lead.objects.order_by("-updated_at")[:5]:
+        lead_context.append(
+            {
+                "company_name": lead.company_name,
+                "stage": lead.stage,
+                "estimated_value": float(lead.estimated_value),
+                "last_touch": lead.last_touch.isoformat() if lead.last_touch else None,
+                "notes": (lead.notes or "")[:220],
+            }
+        )
+
+    system_prompt = (
+        "You are a concise CRM copilot. Provide practical sales guidance. "
+        "Use short bullets and mention risks and next steps. "
+        "If data is missing, say what to collect next."
+    )
+    compiled_prompt = (
+        f"{system_prompt}\n\n"
+        f"Recent lead context:\n{json.dumps(lead_context, ensure_ascii=True)}\n\n"
+        f"User request:\n{user_prompt}\n\n"
+        "Return a compact answer for a sales rep."
+    )
+
+    response_text, err = _call_ollama(compiled_prompt)
+    if err:
+        return JsonResponse({"detail": err}, status=502)
+
+    return JsonResponse(
+        {
+            "model": os.getenv("OLLAMA_MODEL", "llama3.2"),
+            "reply": response_text,
         }
     )

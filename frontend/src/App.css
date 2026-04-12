@@ -140,6 +140,120 @@
   color: var(--text);
 }
 
+.ai-summary-grid {
+  margin-top: 0.8rem;
+  display: grid;
+  gap: 0.7rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ai-chip {
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+  background: var(--surface);
+  padding: 0.8rem;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.ai-chip span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.ai-chip strong {
+  color: var(--text);
+  font-size: 1.2rem;
+}
+
+.ai-list {
+  list-style: none;
+  margin: 0.85rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.ai-list li {
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+  background: var(--surface);
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.ai-list li div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.ai-list p,
+.ai-list small {
+  margin: 0;
+  color: var(--muted);
+}
+
+.risk-pill {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 0.2rem 0.5rem;
+}
+
+.risk-pill.low {
+  background: #d8f3dc;
+  color: #2d6a4f;
+}
+
+.risk-pill.medium {
+  background: #ffeccf;
+  color: #955806;
+}
+
+.risk-pill.high {
+  background: #f5d0d0;
+  color: #7f1d1d;
+}
+
+.ai-chat-form {
+  margin-top: 0.75rem;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.ai-chat-form label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.ai-reply {
+  margin-top: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+  padding: 0.8rem;
+  background: var(--surface);
+}
+
+.ai-reply h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.ai-reply p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
 .table-wrap {
   overflow-x: auto;
   margin-top: 0.75rem;
@@ -356,6 +470,7 @@ textarea {
   }
 
   .metrics,
+  .ai-summary-grid,
   .pipeline-grid,
   .two-col,
   .form-grid {
