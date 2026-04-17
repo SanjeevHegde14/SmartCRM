@@ -660,6 +660,29 @@ textarea {
   gap: 0.5rem;
 }
 
+.inline-context-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: end;
+  margin-bottom: 0.8rem;
+}
+
+.inline-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+}
+
+.inline-form .full-inline {
+  grid-column: 1 / -1;
+}
+
+.inline-form button {
+  width: fit-content;
+}
+
 .auth-wrap {
   max-width: 680px;
 }
@@ -764,7 +787,8 @@ textarea {
   .report-grid,
   .pipeline-grid,
   .two-col,
-  .form-grid {
+  .form-grid,
+  .inline-form {
     grid-template-columns: 1fr;
   }
 }

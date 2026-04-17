@@ -76,6 +76,35 @@ export const leadApi = {
         });
     },
 
+    listNotes: async (leadId) => {
+        return apiRequest(`/leads/${leadId}/notes/list/`, { method: 'GET' });
+    },
+
+    addNote: async (leadId, payload) => {
+        return apiRequest(`/leads/${leadId}/notes/`, {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+    },
+
+    listReminders: async (leadId) => {
+        return apiRequest(`/leads/${leadId}/reminders/`, { method: 'GET' });
+    },
+
+    createReminder: async (leadId, payload) => {
+        return apiRequest(`/leads/${leadId}/reminders/`, {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+    },
+
+    updateReminder: async (reminderId, payload) => {
+        return apiRequest(`/reminders/${reminderId}/`, {
+            method: 'PATCH',
+            body: JSON.stringify(payload),
+        });
+    },
+
     dashboard: async () => {
         return apiRequest('/dashboard/', { method: 'GET' });
     },

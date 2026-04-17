@@ -20,6 +20,15 @@ function App() {
   const [aiReply, setAiReply] = useState('')
   const [aiChatBusy, setAiChatBusy] = useState(false)
   const [aiChatError, setAiChatError] = useState('')
+  const [selectedLeadId, setSelectedLeadId] = useState(null)
+  const [logItems, setLogItems] = useState([])
+  const [reminderItems, setReminderItems] = useState([])
+  const [logForm, setLogForm] = useState({ channel: 'email', note: '' })
+  const [reminderForm, setReminderForm] = useState({ task: '', due_at: '' })
+  const [logsBusy, setLogsBusy] = useState(false)
+  const [remindersBusy, setRemindersBusy] = useState(false)
+  const [logsError, setLogsError] = useState('')
+  const [remindersError, setRemindersError] = useState('')
   const [stageDrafts, setStageDrafts] = useState({})
   const [updatingLeadId, setUpdatingLeadId] = useState(null)
   const [stageUpdateError, setStageUpdateError] = useState('')
@@ -119,12 +128,23 @@ function App() {
       .sort((a, b) => b.value - a.value)
   }, [leads])
 
+  const selectedLead = useMemo(() => {
+    if (!selectedLeadId) return null
+    return leads.find((item) => item.id === selectedLeadId) || null
+  }, [selectedLeadId, leads])
+
   useEffect(() => {
     const drafts = {}
     leads.forEach((lead) => {
       drafts[lead.id] = lead.stage
     })
     setStageDrafts(drafts)
+    if (!selectedLeadId && leads.length) {
+      setSelectedLeadId(leads[0].id)
+    }
+    if (selectedLeadId && !leads.find((item) => item.id === selectedLeadId) && leads.length) {
+      setSelectedLeadId(leads[0].id)
+    }
   }, [leads])
 
   const toMoney = (amount) =>
@@ -254,6 +274,120 @@ function App() {
     }
   }
 
+  const formatDateTimeLocal = (isoValue) => {
+    if (!isoValue) return ''
+    const date = new Date(isoValue)
+    if (Number.isNaN(date.getTime())) return ''
+    const pad = (value) => String(value).padStart(2, '0')
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  }
+
+  const loadLogsForLead = async (leadId) => {
+    if (!leadId) return
+    setLogsBusy(true)
+    setLogsError('')
+    try {
+      const response = await leadApi.listNotes(leadId)
+      setLogItems(response.items || [])
+    } catch (error) {
+      setLogsError(error.message || 'Could not load communication logs')
+    } finally {
+      setLogsBusy(false)
+    }
+  }
+
+  const loadRemindersForLead = async (leadId) => {
+    if (!leadId) return
+    setRemindersBusy(true)
+    setRemindersError('')
+    try {
+      const response = await leadApi.listReminders(leadId)
+      setReminderItems(response.items || [])
+    } catch (error) {
+      setRemindersError(error.message || 'Could not load reminders')
+    } finally {
+      setRemindersBusy(false)
+    }
+  }
+
+  const openCommunicationLogs = async () => {
+    setWorkspaceView('logs')
+    if (selectedLeadId) {
+      await loadLogsForLead(selectedLeadId)
+    }
+  }
+
+  const openReminders = async () => {
+    setWorkspaceView('reminders')
+    if (selectedLeadId) {
+      await loadRemindersForLead(selectedLeadId)
+    }
+  }
+
+  const onChangeLeadContext = async (nextLeadId) => {
+    const parsed = Number(nextLeadId)
+    setSelectedLeadId(parsed)
+    if (workspaceView === 'logs') {
+      await loadLogsForLead(parsed)
+    }
+    if (workspaceView === 'reminders') {
+      await loadRemindersForLead(parsed)
+    }
+  }
+
+  const onCreateLog = async (event) => {
+    event.preventDefault()
+    if (!selectedLeadId) return
+
+    setLogsBusy(true)
+    setLogsError('')
+    try {
+      await leadApi.addNote(selectedLeadId, {
+        channel: logForm.channel,
+        note: logForm.note,
+      })
+      setLogForm((prev) => ({ ...prev, note: '' }))
+      await loadLogsForLead(selectedLeadId)
+    } catch (error) {
+      setLogsError(error.message || 'Could not create communication log')
+    } finally {
+      setLogsBusy(false)
+    }
+  }
+
+  const onCreateReminder = async (event) => {
+    event.preventDefault()
+    if (!selectedLeadId) return
+
+    setRemindersBusy(true)
+    setRemindersError('')
+    try {
+      await leadApi.createReminder(selectedLeadId, {
+        task: reminderForm.task,
+        due_at: new Date(reminderForm.due_at).toISOString(),
+      })
+      setReminderForm({ task: '', due_at: '' })
+      await loadRemindersForLead(selectedLeadId)
+    } catch (error) {
+      setRemindersError(error.message || 'Could not create reminder')
+    } finally {
+      setRemindersBusy(false)
+    }
+  }
+
+  const onToggleReminderDone = async (reminder) => {
+    setRemindersBusy(true)
+    setRemindersError('')
+    try {
+      await leadApi.updateReminder(reminder.id, { is_done: !reminder.is_done })
+      await loadRemindersForLead(selectedLeadId)
+    } catch (error) {
+      setRemindersError(error.message || 'Could not update reminder')
+    } finally {
+      setRemindersBusy(false)
+    }
+  }
+
   const WorkspaceTopBar = () => (
     <header className="topbar">
       <div className="topbar-left">
@@ -275,6 +409,12 @@ function App() {
         </button>
         <button className="top-btn" onClick={() => setWorkspaceView('reports')} type="button">
           Reports
+        </button>
+        <button className="top-btn" onClick={openReminders} type="button">
+          Reminders
+        </button>
+        <button className="top-btn" onClick={openCommunicationLogs} type="button">
+          Communication Logs
         </button>
         <button className="top-btn" onClick={onLogout} type="button">
           Log Out
@@ -604,6 +744,164 @@ function App() {
     )
   }
 
+  if (workspaceView === 'reminders') {
+    return (
+      <main className="crm">
+        <WorkspaceTopBar />
+
+        <header className="subpage-top panel">
+          <h1>Reminder Management</h1>
+          <p className="muted-text">Create follow-up reminders per lead and mark tasks complete.</p>
+        </header>
+
+        <section className="panel">
+          <div className="inline-context-row">
+            <label>
+              Lead
+              <select
+                value={selectedLeadId || ''}
+                onChange={(event) => onChangeLeadContext(event.target.value)}
+              >
+                {leads.map((lead) => (
+                  <option key={`reminder-lead-${lead.id}`} value={lead.id}>
+                    {lead.company_name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="muted-text">
+              {selectedLead ? `Managing reminders for ${selectedLead.company_name}` : 'Create at least one lead first.'}
+            </p>
+          </div>
+
+          <form className="inline-form" onSubmit={onCreateReminder}>
+            <label>
+              Task
+              <input
+                value={reminderForm.task}
+                onChange={(event) => setReminderForm((prev) => ({ ...prev, task: event.target.value }))}
+                placeholder="Follow up with procurement"
+                required
+              />
+            </label>
+            <label>
+              Due At
+              <input
+                type="datetime-local"
+                value={reminderForm.due_at}
+                onChange={(event) => setReminderForm((prev) => ({ ...prev, due_at: event.target.value }))}
+                required
+              />
+            </label>
+            <button className="cta" type="submit" disabled={!selectedLeadId || remindersBusy}>
+              {remindersBusy ? 'Saving...' : 'Add Reminder'}
+            </button>
+          </form>
+
+          {remindersError && <p className="error">{remindersError}</p>}
+
+          <ul className="reminder-list">
+            {reminderItems.map((item) => (
+              <li key={`rem-${item.id}`}>
+                <div>
+                  <strong>{item.task}</strong>
+                  <button
+                    type="button"
+                    className={item.is_done ? 'ghost' : 'cta'}
+                    onClick={() => onToggleReminderDone(item)}
+                    disabled={remindersBusy}
+                  >
+                    {item.is_done ? 'Mark Pending' : 'Mark Done'}
+                  </button>
+                </div>
+                <time>{new Date(item.due_at).toLocaleString()}</time>
+              </li>
+            ))}
+            {!reminderItems.length && !remindersBusy && <li className="muted-text">No reminders for this lead yet.</li>}
+          </ul>
+        </section>
+      </main>
+    )
+  }
+
+  if (workspaceView === 'logs') {
+    return (
+      <main className="crm">
+        <WorkspaceTopBar />
+
+        <header className="subpage-top panel">
+          <h1>Communication Logs</h1>
+          <p className="muted-text">Track call, email, meeting, and chat updates by lead.</p>
+        </header>
+
+        <section className="panel">
+          <div className="inline-context-row">
+            <label>
+              Lead
+              <select
+                value={selectedLeadId || ''}
+                onChange={(event) => onChangeLeadContext(event.target.value)}
+              >
+                {leads.map((lead) => (
+                  <option key={`log-lead-${lead.id}`} value={lead.id}>
+                    {lead.company_name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="muted-text">
+              {selectedLead ? `Viewing communication history for ${selectedLead.company_name}` : 'Create at least one lead first.'}
+            </p>
+          </div>
+
+          <form className="inline-form" onSubmit={onCreateLog}>
+            <label>
+              Channel
+              <select
+                value={logForm.channel}
+                onChange={(event) => setLogForm((prev) => ({ ...prev, channel: event.target.value }))}
+              >
+                <option value="email">Email</option>
+                <option value="call">Call</option>
+                <option value="meeting">Meeting</option>
+                <option value="chat">Chat</option>
+              </select>
+            </label>
+            <label className="full-inline">
+              Note
+              <textarea
+                rows="3"
+                value={logForm.note}
+                onChange={(event) => setLogForm((prev) => ({ ...prev, note: event.target.value }))}
+                placeholder="Shared revised pricing and requested feedback by Friday"
+                required
+              />
+            </label>
+            <button className="cta" type="submit" disabled={!selectedLeadId || logsBusy}>
+              {logsBusy ? 'Saving...' : 'Add Log Entry'}
+            </button>
+          </form>
+
+          {logsError && <p className="error">{logsError}</p>}
+
+          <ul className="log-list">
+            {logItems.map((item) => (
+              <li key={`log-${item.id}`}>
+                <div>
+                  <strong>{item.channel.toUpperCase()}</strong>
+                  <small>{new Date(item.created_at).toLocaleString()}</small>
+                </div>
+                <p>{item.note}</p>
+                <span>Owner: {item.owner}</span>
+              </li>
+            ))}
+            {!logItems.length && !logsBusy && <li className="muted-text">No communication logs for this lead yet.</li>}
+          </ul>
+        </section>
+      </main>
+    )
+  }
+
   if (workspaceView === 'ai') {
     return (
       <main className="crm">
@@ -666,6 +964,20 @@ function App() {
           type="button"
         >
           Conversion Reports
+        </button>
+        <button
+          className={workspaceView === 'reminders' ? 'hub-btn active' : 'hub-btn'}
+          onClick={openReminders}
+          type="button"
+        >
+          Reminder Management
+        </button>
+        <button
+          className={workspaceView === 'logs' ? 'hub-btn active' : 'hub-btn'}
+          onClick={openCommunicationLogs}
+          type="button"
+        >
+          Communication Logs
         </button>
       </section>
 

@@ -14,6 +14,18 @@ from django.views.decorators.http import require_GET, require_http_methods
 
 from .models import Lead, LeadNote, Reminder
 
+try:
+    import firebase_admin
+    from firebase_admin import credentials, firestore
+except Exception:
+    firebase_admin = None
+    credentials = None
+    firestore = None
+
+
+_FIRESTORE_CLIENT = None
+_FIREBASE_BOOTSTRAPPED = False
+
 
 STAGE_PROBABILITY = {
     Lead.STAGE_NEW: 0.12,
@@ -150,6 +162,72 @@ def parse_json_body(request: HttpRequest):
         return json.loads(request.body.decode("utf-8")) if request.body else {}
     except (json.JSONDecodeError, UnicodeDecodeError):
         return None
+
+
+def _get_firestore_client():
+    global _FIRESTORE_CLIENT, _FIREBASE_BOOTSTRAPPED
+
+    if _FIREBASE_BOOTSTRAPPED:
+        return _FIRESTORE_CLIENT
+
+    _FIREBASE_BOOTSTRAPPED = True
+
+    if not firebase_admin or not firestore:
+        return None
+
+    project_id = os.getenv("FIREBASE_PROJECT_ID", "").strip() or None
+    credentials_path = os.getenv("FIREBASE_CREDENTIALS_PATH", "").strip()
+
+    try:
+        if not firebase_admin._apps:
+            options = {"projectId": project_id} if project_id else None
+            if credentials_path:
+                cred = credentials.Certificate(credentials_path)
+                firebase_admin.initialize_app(cred, options=options)
+            else:
+                firebase_admin.initialize_app(options=options)
+
+        _FIRESTORE_CLIENT = firestore.client()
+    except Exception:
+        _FIRESTORE_CLIENT = None
+
+    return _FIRESTORE_CLIENT
+
+
+def _sync_to_firestore(collection: str, document_id: int, payload: dict):
+    client = _get_firestore_client()
+    if not client:
+        return
+
+    try:
+        client.collection(collection).document(str(document_id)).set(payload, merge=True)
+    except Exception:
+        # Keep Django as source of truth when Firestore sync is unavailable.
+        return
+
+
+def _parse_due_at(raw_due_at):
+    if not raw_due_at:
+        return None
+
+    due_at = None
+    if isinstance(raw_due_at, str):
+        normalized = raw_due_at.replace("Z", "+00:00")
+        try:
+            due_at = datetime.fromisoformat(normalized)
+        except ValueError:
+            try:
+                due_at = datetime.strptime(raw_due_at, "%Y-%m-%dT%H:%M")
+            except ValueError:
+                return None
+
+    if not due_at:
+        return None
+
+    if timezone.is_naive(due_at):
+        due_at = timezone.make_aware(due_at, timezone.get_current_timezone())
+
+    return due_at
 
 
 def _call_ollama(prompt: str):
@@ -500,6 +578,8 @@ def leads_collection_view(request: HttpRequest):
         notes=(data.get("notes") or "").strip(),
     )
 
+    _sync_to_firestore("leads", lead.id, serialize_lead(lead))
+
     return JsonResponse({"item": serialize_lead(lead)}, status=201)
 
 
@@ -542,6 +622,7 @@ def lead_update_view(request: HttpRequest, lead_id: int):
             lead.last_touch = None
 
     lead.save()
+    _sync_to_firestore("leads", lead.id, serialize_lead(lead))
     return JsonResponse({"item": serialize_lead(lead)})
 
 
@@ -566,7 +647,77 @@ def lead_note_create_view(request: HttpRequest, lead_id: int):
         return JsonResponse({"detail": "note is required."}, status=400)
 
     note = LeadNote.objects.create(lead=lead, owner=owner, channel=channel, note=note_text)
+    _sync_to_firestore("lead_notes", note.id, serialize_note(note))
     return JsonResponse({"item": serialize_note(note)}, status=201)
+
+
+@login_required
+@require_GET
+def lead_notes_list_view(request: HttpRequest, lead_id: int):
+    try:
+        lead = Lead.objects.get(pk=lead_id)
+    except Lead.DoesNotExist:
+        return JsonResponse({"detail": "Lead not found."}, status=404)
+
+    notes = LeadNote.objects.filter(lead=lead).order_by("-created_at")
+    return JsonResponse({"items": [serialize_note(item) for item in notes]})
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+@csrf_exempt
+def lead_reminders_view(request: HttpRequest, lead_id: int):
+    try:
+        lead = Lead.objects.get(pk=lead_id)
+    except Lead.DoesNotExist:
+        return JsonResponse({"detail": "Lead not found."}, status=404)
+
+    if request.method == "GET":
+        reminders = Reminder.objects.filter(lead=lead).order_by("due_at")
+        return JsonResponse({"items": [serialize_reminder(item) for item in reminders]})
+
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON payload."}, status=400)
+
+    task = (data.get("task") or "").strip()
+    due_at = _parse_due_at(data.get("due_at"))
+    if not task or not due_at:
+        return JsonResponse({"detail": "task and valid due_at are required."}, status=400)
+
+    reminder = Reminder.objects.create(lead=lead, task=task, due_at=due_at)
+    _sync_to_firestore("reminders", reminder.id, serialize_reminder(reminder))
+    return JsonResponse({"item": serialize_reminder(reminder)}, status=201)
+
+
+@login_required
+@require_http_methods(["PATCH"])
+@csrf_exempt
+def reminder_update_view(request: HttpRequest, reminder_id: int):
+    data = parse_json_body(request)
+    if data is None:
+        return JsonResponse({"detail": "Invalid JSON payload."}, status=400)
+
+    try:
+        reminder = Reminder.objects.get(pk=reminder_id)
+    except Reminder.DoesNotExist:
+        return JsonResponse({"detail": "Reminder not found."}, status=404)
+
+    if "task" in data:
+        reminder.task = (data.get("task") or "").strip()
+
+    if "is_done" in data:
+        reminder.is_done = bool(data.get("is_done"))
+
+    if "due_at" in data:
+        due_at = _parse_due_at(data.get("due_at"))
+        if not due_at:
+            return JsonResponse({"detail": "due_at must be a valid ISO datetime."}, status=400)
+        reminder.due_at = due_at
+
+    reminder.save()
+    _sync_to_firestore("reminders", reminder.id, serialize_reminder(reminder))
+    return JsonResponse({"item": serialize_reminder(reminder)})
 
 
 @login_required
