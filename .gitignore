@@ -21,3 +21,6 @@ frontend/dist/
 # Env files
 .env
 .env.*
+
+# Firebase service account keys
+backend/firebase-key.json

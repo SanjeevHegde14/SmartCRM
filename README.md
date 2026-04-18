@@ -16,8 +16,9 @@ Manage client leads and sales follow-up process.
 
 ## Current Stack (Implemented)
 
-- Backend: Django + Firebase (local SQLite retained for Django models)
+- Backend: Django + Firebase
 - Frontend: React + Vite
+- Database: Postgres via `DATABASE_URL` (SQLite fallback if not configured)
 
 ## Project Structure
 
@@ -54,6 +55,14 @@ Manage client leads and sales follow-up process.
 - FIREBASE_PROJECT_ID
 - FIREBASE_CREDENTIALS_PATH
 - FIREBASE_STORAGE_BUCKET (optional)
+
+5. Shared database env vars (recommended for web + future Android):
+- DATABASE_URL
+- DB_CONN_MAX_AGE (optional, default 60)
+- DB_SSL_REQUIRE (optional, default true)
+
+Example:
+- DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DBNAME
 
 ## Quick Start (Copy/Paste)
 
