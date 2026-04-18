@@ -21,3 +21,4 @@ frontend/dist/
 # Env files
 .env
 .env.*
+.vscode/
