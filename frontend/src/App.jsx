@@ -265,7 +265,11 @@ function App() {
     setStageUpdateError('')
     setUpdatingLeadId(leadId)
     try {
-      await leadApi.update(leadId, { stage: nextStage })
+      // Preserve all existing fields when updating stage
+      await leadApi.update(leadId, {
+        ...currentLead,
+        stage: nextStage,
+      })
       await loadData()
     } catch (error) {
       setStageUpdateError(error.message || 'Could not update lead stage')
@@ -325,13 +329,13 @@ function App() {
   }
 
   const onChangeLeadContext = async (nextLeadId) => {
-    const parsed = Number(nextLeadId)
-    setSelectedLeadId(parsed)
+    const nextId = nextLeadId
+    setSelectedLeadId(nextId)
     if (workspaceView === 'logs') {
-      await loadLogsForLead(parsed)
+      await loadLogsForLead(nextId)
     }
     if (workspaceView === 'reminders') {
-      await loadRemindersForLead(parsed)
+      await loadRemindersForLead(nextId)
     }
   }
 
