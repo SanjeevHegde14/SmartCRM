@@ -2,6 +2,96 @@ import { useEffect, useMemo, useState } from 'react'
 import { aiApi, authApi, leadApi } from './api'
 import './App.css'
 
+const EMPTY_LEAD_FORM = {
+  company_name: '',
+  contact_name: '',
+  contact_email: '',
+  contact_phone: '',
+  source: 'Website',
+  stage: 'new',
+  estimated_value: '',
+  assigned_to: '',
+  last_touch: '',
+  notes: '',
+}
+
+function LeadFormFields({ value, onChange }) {
+  return (
+    <>
+      <label>
+        Company Name
+        <input
+          required
+          value={value.company_name}
+          onChange={(event) => onChange((prev) => ({ ...prev, company_name: event.target.value }))}
+        />
+      </label>
+      <label>
+        Contact Name
+        <input
+          required
+          value={value.contact_name}
+          onChange={(event) => onChange((prev) => ({ ...prev, contact_name: event.target.value }))}
+        />
+      </label>
+      <label>
+        Contact Email
+        <input
+          type="email"
+          value={value.contact_email}
+          onChange={(event) => onChange((prev) => ({ ...prev, contact_email: event.target.value }))}
+        />
+      </label>
+      <label>
+        Contact Phone
+        <input
+          value={value.contact_phone}
+          onChange={(event) => onChange((prev) => ({ ...prev, contact_phone: event.target.value }))}
+        />
+      </label>
+      <label>
+        Source
+        <input value={value.source} onChange={(event) => onChange((prev) => ({ ...prev, source: event.target.value }))} />
+      </label>
+      <label>
+        Assigned To
+        <input
+          value={value.assigned_to}
+          onChange={(event) => onChange((prev) => ({ ...prev, assigned_to: event.target.value }))}
+        />
+      </label>
+      <label>
+        Stage
+        <select value={value.stage} onChange={(event) => onChange((prev) => ({ ...prev, stage: event.target.value }))}>
+          <option value="new">New</option>
+          <option value="qualified">Qualified</option>
+          <option value="proposal">Proposal</option>
+          <option value="negotiation">Negotiation</option>
+          <option value="won">Won</option>
+          <option value="lost">Lost</option>
+        </select>
+      </label>
+      <label>
+        Estimated Value
+        <input
+          type="number"
+          min="0"
+          value={value.estimated_value}
+          onChange={(event) => onChange((prev) => ({ ...prev, estimated_value: event.target.value }))}
+        />
+      </label>
+      <label>
+        Last Touch
+        <input type="date" value={value.last_touch} onChange={(event) => onChange((prev) => ({ ...prev, last_touch: event.target.value }))} />
+      </label>
+      <label className="full">
+        Notes
+        <textarea rows="3" value={value.notes} onChange={(event) => onChange((prev) => ({ ...prev, notes: event.target.value }))} />
+      </label>
+    </>
+  )
+}
+
 function App() {
   const [theme, setTheme] = useState('dark')
   const [screen, setScreen] = useState('landing')
@@ -18,6 +108,7 @@ function App() {
   })
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiReply, setAiReply] = useState('')
+  const [aiMeta, setAiMeta] = useState({ model: '', llmSource: '', dataSource: '' })
   const [aiChatBusy, setAiChatBusy] = useState(false)
   const [aiChatError, setAiChatError] = useState('')
   const [selectedLeadId, setSelectedLeadId] = useState(null)
@@ -35,18 +126,9 @@ function App() {
 
   const [loginForm, setLoginForm] = useState({ username: '', password: '' })
   const [signupForm, setSignupForm] = useState({ username: '', password: '', confirm_password: '' })
-  const [leadForm, setLeadForm] = useState({
-    company_name: '',
-    contact_name: '',
-    contact_email: '',
-    contact_phone: '',
-    source: 'Website',
-    stage: 'new',
-    estimated_value: '',
-    assigned_to: '',
-    last_touch: '',
-    notes: '',
-  })
+  const [leadForm, setLeadForm] = useState(EMPTY_LEAD_FORM)
+  const [editingLeadId, setEditingLeadId] = useState(null)
+  const [editLeadForm, setEditLeadForm] = useState(EMPTY_LEAD_FORM)
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('smartcrm-theme')
@@ -212,18 +294,7 @@ function App() {
         estimated_value: Number(leadForm.estimated_value || 0),
       })
       await loadData()
-      setLeadForm({
-        company_name: '',
-        contact_name: '',
-        contact_email: '',
-        contact_phone: '',
-        source: 'Website',
-        stage: 'new',
-        estimated_value: '',
-        assigned_to: '',
-        last_touch: '',
-        notes: '',
-      })
+      setLeadForm(EMPTY_LEAD_FORM)
       setWorkspaceView('pipeline')
     } finally {
       setBusy(false)
@@ -232,6 +303,23 @@ function App() {
 
   const openAiAssistant = () => {
     setWorkspaceView('ai')
+  }
+
+  const openEditLead = (lead) => {
+    setEditingLeadId(lead.id)
+    setEditLeadForm({
+      company_name: lead.company_name || '',
+      contact_name: lead.contact_name || '',
+      contact_email: lead.contact_email || '',
+      contact_phone: lead.contact_phone || '',
+      source: lead.source || 'Website',
+      stage: lead.stage || 'new',
+      estimated_value: String(lead.estimated_value ?? ''),
+      assigned_to: lead.assigned_to || '',
+      last_touch: lead.last_touch || '',
+      notes: lead.notes || '',
+    })
+    setWorkspaceView('edit')
   }
 
   const goHome = () => {
@@ -245,13 +333,46 @@ function App() {
 
     setAiChatBusy(true)
     setAiChatError('')
+    setAiMeta({ model: '', llmSource: '', dataSource: '' })
     try {
       const response = await aiApi.chat(prompt)
       setAiReply(response.reply || '')
+      setAiMeta({
+        model: response.model || '',
+        llmSource: response.llm_source || '',
+        dataSource: response.data_source || '',
+      })
     } catch (error) {
       setAiChatError(error.message || 'Could not fetch AI response')
+      setAiReply('')
     } finally {
       setAiChatBusy(false)
+    }
+  }
+
+  const onSaveLeadEdit = async (event) => {
+    event.preventDefault()
+    if (!editingLeadId) return
+
+    if (!editLeadForm.company_name.trim() || !editLeadForm.contact_name.trim()) {
+      setStageUpdateError('company_name and contact_name are required')
+      return
+    }
+
+    setBusy(true)
+    setStageUpdateError('')
+    try {
+      await leadApi.update(editingLeadId, {
+        ...editLeadForm,
+        estimated_value: Number(editLeadForm.estimated_value || 0),
+      })
+      await loadData()
+      setWorkspaceView('pipeline')
+      setEditingLeadId(null)
+    } catch (error) {
+      setStageUpdateError(error.message || 'Could not update lead')
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -576,93 +697,38 @@ function App() {
 
         <section className="panel lead-create-page">
           <form onSubmit={onCreateLead} className="form-grid">
-            <label>
-              Company Name
-              <input
-                required
-                value={leadForm.company_name}
-                onChange={(event) => setLeadForm((prev) => ({ ...prev, company_name: event.target.value }))}
-              />
-            </label>
-            <label>
-              Contact Name
-              <input
-                required
-                value={leadForm.contact_name}
-                onChange={(event) => setLeadForm((prev) => ({ ...prev, contact_name: event.target.value }))}
-              />
-            </label>
-            <label>
-              Contact Email
-              <input
-                type="email"
-                value={leadForm.contact_email}
-                onChange={(event) => setLeadForm((prev) => ({ ...prev, contact_email: event.target.value }))}
-              />
-            </label>
-            <label>
-              Contact Phone
-              <input
-                value={leadForm.contact_phone}
-                onChange={(event) => setLeadForm((prev) => ({ ...prev, contact_phone: event.target.value }))}
-              />
-            </label>
-            <label>
-              Source
-              <input
-                value={leadForm.source}
-                onChange={(event) => setLeadForm((prev) => ({ ...prev, source: event.target.value }))}
-              />
-            </label>
-            <label>
-              Assigned To
-              <input
-                value={leadForm.assigned_to}
-                onChange={(event) => setLeadForm((prev) => ({ ...prev, assigned_to: event.target.value }))}
-              />
-            </label>
-            <label>
-              Stage
-              <select
-                value={leadForm.stage}
-                onChange={(event) => setLeadForm((prev) => ({ ...prev, stage: event.target.value }))}
-              >
-                <option value="new">New</option>
-                <option value="qualified">Qualified</option>
-                <option value="proposal">Proposal</option>
-                <option value="negotiation">Negotiation</option>
-                <option value="won">Won</option>
-                <option value="lost">Lost</option>
-              </select>
-            </label>
-            <label>
-              Estimated Value
-              <input
-                type="number"
-                min="0"
-                value={leadForm.estimated_value}
-                onChange={(event) => setLeadForm((prev) => ({ ...prev, estimated_value: event.target.value }))}
-              />
-            </label>
-            <label>
-              Last Touch
-              <input
-                type="date"
-                value={leadForm.last_touch}
-                onChange={(event) => setLeadForm((prev) => ({ ...prev, last_touch: event.target.value }))}
-              />
-            </label>
-            <label className="full">
-              Notes
-              <textarea
-                rows="3"
-                value={leadForm.notes}
-                onChange={(event) => setLeadForm((prev) => ({ ...prev, notes: event.target.value }))}
-              />
-            </label>
+            <LeadFormFields value={leadForm} onChange={setLeadForm} />
             <button className="cta" disabled={busy} type="submit">
               {busy ? 'Saving...' : 'Create Lead'}
             </button>
+          </form>
+        </section>
+      </main>
+    )
+  }
+
+  if (workspaceView === 'edit') {
+    return (
+      <main className="crm">
+        <WorkspaceTopBar />
+
+        <header className="subpage-top panel">
+          <h1>Edit Lead</h1>
+          <p className="muted-text">Update lead details and keep Firebase data in sync.</p>
+        </header>
+
+        <section className="panel lead-create-page">
+          <form onSubmit={onSaveLeadEdit} className="form-grid">
+            <LeadFormFields value={editLeadForm} onChange={setEditLeadForm} />
+            <div className="row-actions full">
+              <button className="cta" disabled={busy} type="submit">
+                {busy ? 'Saving...' : 'Save Changes'}
+              </button>
+              <button className="ghost" type="button" onClick={() => setWorkspaceView('pipeline')}>
+                Cancel
+              </button>
+            </div>
+            {stageUpdateError && <p className="error full">{stageUpdateError}</p>}
           </form>
         </section>
       </main>
@@ -913,11 +979,11 @@ function App() {
 
         <header className="subpage-top panel">
           <h1>Ask AI</h1>
-          <p className="muted-text">Chat with your local CRM assistant in a dedicated page.</p>
+          <p className="muted-text">Chat with your CRM AI assistant in a dedicated page.</p>
         </header>
 
         <section className="panel">
-          <h2>Local AI Assistant (Ollama)</h2>
+          <h2>CRM AI Assistant</h2>
           <form className="ai-chat-form" onSubmit={onAskAi}>
             <label>
               Ask for help with follow-up strategy, risk review, or message drafting
@@ -929,13 +995,20 @@ function App() {
               />
             </label>
             <button className="cta" disabled={aiChatBusy} type="submit">
-              {aiChatBusy ? 'Thinking...' : 'Ask Local AI'}
+              {aiChatBusy ? 'Thinking...' : 'Ask AI'}
             </button>
           </form>
           {aiChatError && <p className="error">{aiChatError}</p>}
           {aiReply && (
             <article className="ai-reply">
               <h3>Assistant Reply</h3>
+              {(aiMeta.model || aiMeta.llmSource || aiMeta.dataSource) && (
+                <p className="muted-text">
+                  Source: {aiMeta.llmSource || 'unknown'}
+                  {aiMeta.model ? ` | Model: ${aiMeta.model}` : ''}
+                  {aiMeta.dataSource ? ` | Data: ${aiMeta.dataSource}` : ''}
+                </p>
+              )}
               <p>{aiReply}</p>
             </article>
           )}
@@ -1087,6 +1160,13 @@ function App() {
                             }
                           >
                             {updatingLeadId === lead.id ? 'Saving...' : 'Save'}
+                          </button>
+                          <button
+                            type="button"
+                            className="stage-save stage-edit"
+                            onClick={() => openEditLead(lead)}
+                          >
+                            Edit
                           </button>
                         </div>
                       </td>

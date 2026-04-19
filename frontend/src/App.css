@@ -581,6 +581,10 @@ td small {
   cursor: pointer;
 }
 
+.stage-edit {
+  background: transparent;
+}
+
 .stage-save:disabled {
   opacity: 0.5;
   cursor: not-allowed;

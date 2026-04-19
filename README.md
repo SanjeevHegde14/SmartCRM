@@ -16,9 +16,10 @@ Manage client leads and sales follow-up process.
 
 ## Current Stack (Implemented)
 
-- Backend: Django + Firebase
+- Backend: Django
 - Frontend: React + Vite
-- Database: Postgres via `DATABASE_URL` (SQLite fallback if not configured)
+- Database: Firebase Firestore for app data
+- LLM: Hosted Hugging Face endpoint with fallback to local Ollama
 
 ## Project Structure
 
@@ -32,58 +33,53 @@ Manage client leads and sales follow-up process.
 
 ## Run Locally
 
-1. Backend setup:
-- cd backend
-- python3 -m pip install --user -r requirements.txt
-- cp .env.example .env
-- edit .env with your Firebase credentials
-- python manage.py migrate
-- python3 manage.py runserver
+### 1. Backend
+- `cd backend`
+- `python3 -m pip install --user -r requirements.txt`
+- `cp .env.example .env`
+- Fill in the Firebase values in `.env`
+- Put your Firebase service account JSON at `backend/firebase-key.json`
+- `python manage.py migrate`
+- `python manage.py runserver`
 
-2. Frontend setup:
-- cd frontend
-- nvm install
-- nvm use
-- npm install
-- npm run dev
+### 2. Frontend
+- `cd frontend`
+- `nvm use 20`
+- `npm install`
+- `cp .env.example .env`
+- Fill in the same Firebase web app config values used by the project
+- `npm run dev`
 
-3. API URL (optional):
-- frontend uses VITE_API_URL
-- default value: http://127.0.0.1:8000/api
+### 3. Firebase connection for anyone cloning the repo
+To connect to the same database, a new developer needs:
 
-4. Firebase env vars:
-- FIREBASE_PROJECT_ID
-- FIREBASE_CREDENTIALS_PATH
-- FIREBASE_STORAGE_BUCKET (optional)
+- The same Firebase project ID: `smartcrm-dd52b`
+- The same web app config values from Firebase Console
+- The Firebase service account JSON for the backend
+- Firestore rules already published in the Firebase project
+- The repo `.env` values copied from `.env.example`
 
-5. Shared database env vars (recommended for web + future Android):
-- DATABASE_URL
-- DB_CONN_MAX_AGE (optional, default 60)
-- DB_SSL_REQUIRE (optional, default true)
+If they use different Firebase values, they will connect to a different database.
 
-Example:
-- DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DBNAME
+### 4. Minimal Firebase handover steps
+If you are handing this project to someone else, tell them to do this:
 
-## Quick Start (Copy/Paste)
+1. Accept the Firebase project invite with their Google account.
+2. Copy `backend/.env.example` to `backend/.env` and set `FIREBASE_PROJECT_ID=smartcrm-dd52b`.
+3. Put a valid service account JSON file at `backend/firebase-key.json`.
+4. Copy `frontend/.env.example` to `frontend/.env` and fill the Firebase web app config from Firebase Console.
+5. Run `cd backend && python manage.py migrate` and `python manage.py runserver`.
+6. Run `cd frontend && nvm use 20 && npm install && npm run dev`.
+7. Open the web app and verify that a new lead appears in Firestore.
 
-Backend:
-- cd backend
-- python3 -m pip install --user -r requirements.txt
-- cp .env.example .env
-- python3 manage.py migrate
-- python3 manage.py runserver
-
-Frontend:
-- cd frontend
-- nvm install
-- nvm use
-- npm install
-- npm run dev
+For Android later, they only need the same Firebase project plus `google-services.json` from Firebase Console.
 
 ## Troubleshooting
 
-- If frontend fails with Node errors, run nvm use inside frontend (project includes .nvmrc with Node 20).
+- If frontend fails with Node errors, run `nvm use 20` inside `frontend`.
 - If port 8000 or 5173 is already in use, stop old dev servers or run with a different port.
+- If Firebase reads fail, confirm the backend `.env` points to `smartcrm-dd52b` and the service account JSON is present.
+- If the web app connects to the wrong database, check the frontend `.env` Firebase values.
 
 ## API Endpoints
 

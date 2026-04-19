@@ -1,4 +1,4 @@
 {
-  "python.terminal.useEnvFile": true,
-  "python.terminal.executeInFileDir": true
+    "python.terminal.useEnvFile": true,
+    "python.terminal.executeInFileDir": true
 }
