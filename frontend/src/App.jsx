@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { aiApi, authApi, leadApi } from './api'
 import './App.css'
 
-const WORKSPACE_VIEWS = new Set(['pipeline', 'create', 'edit', 'reports', 'reminders', 'logs', 'ai'])
+const WORKSPACE_VIEWS = new Set(['pipeline', 'create', 'edit', 'reports', 'reminders', 'logs', 'ai', 'about'])
 
 function getViewFromHash() {
   const hash = window.location.hash || ''
@@ -20,10 +20,21 @@ function renderMarkdown(text) {
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     .replace(/`(.+?)`/g, '<code>$1</code>')
-    .replace(/^[-•] (.+)$/gm, '<li>$1</li>')
-    .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+    .replace(/^[-•]\s*(.+)$/gm, '<li>$1</li>')
+    .replace(/^\d+\.\s*(.+)$/gm, '<li>$1</li>')
     .replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, '<ul>$1</ul>')
+    .replace(/^\|?(.+?)\|?$/gm, (match, p1) => {
+      // Basic table rows fallback
+      if (p1.includes('|') && !p1.includes('---')) {
+        const cells = p1.split('|').filter(c => c.trim()).map(c => `<td>${c.trim()}</td>`).join('')
+        return `<tr>${cells}</tr>`
+      }
+      if (p1.includes('---')) return ''
+      return match
+    })
+    .replace(/(<tr>[\s\S]*?<\/tr>)(?!\s*<tr>)/g, '<div class="table-wrap"><table><tbody>$1</tbody></table></div>')
     .replace(/\n{2,}/g, '</p><p>')
+    .replace(/\n/g, '<br/>')
   return `<p>${html}</p>`
 }
 
@@ -59,7 +70,7 @@ function downloadPDF(leads, metrics) {
 <html>
 <head>
   <meta charset="UTF-8" />
-  <title>SmartCRM — Lead Report</title>
+  <title>SmartCRM - Lead Report</title>
   <style>
     body { font-family: Arial, sans-serif; font-size: 12px; color: #111; margin: 2cm; }
     h1 { font-size: 20px; margin-bottom: 4px; }
@@ -82,7 +93,7 @@ function downloadPDF(leads, metrics) {
   </style>
 </head>
 <body>
-  <h1>SmartCRM — Lead Report</h1>
+  <h1>SmartCRM - Lead Report</h1>
   <p class="sub">Generated ${new Date().toLocaleString()} · ${leads.length} leads</p>
   <div class="kpis">
     <div class="kpi"><div class="kpi-label">Total Pipeline</div><div class="kpi-val">${toMoney(metrics.total)}</div></div>
@@ -96,11 +107,11 @@ function downloadPDF(leads, metrics) {
       ${leads.map((l, i) => `<tr>
         <td>${i + 1}</td>
         <td><strong>${l.company_name}</strong>${l.contact_email ? `<br><span style="color:#888">${l.contact_email}</span>` : ''}</td>
-        <td>${l.contact_name || '—'}</td>
-        <td>${l.source || '—'}</td>
+        <td>${l.contact_name || '-'}</td>
+        <td>${l.source || '-'}</td>
         <td><span class="tag tag-${l.stage}">${l.stage}</span></td>
         <td>${toMoney(l.estimated_value)}</td>
-        <td>${l.last_touch || '—'}</td>
+        <td>${l.last_touch || '-'}</td>
       </tr>`).join('')}
     </tbody>
   </table>
@@ -129,13 +140,13 @@ function LeadFormFields({ value, onChange }) {
       <label>Phone<input placeholder="+1 555 000 0000" value={value.contact_phone} onChange={set('contact_phone')} /></label>
       <label>Source
         <select value={value.source} onChange={set('source')}>
-          {['Website','Referral','Cold Outreach','LinkedIn','Event','Other'].map((s) => <option key={s}>{s}</option>)}
+          {['Website', 'Referral', 'Cold Outreach', 'LinkedIn', 'Event', 'Other'].map((s) => <option key={s}>{s}</option>)}
         </select>
       </label>
       <label>Assigned To<input placeholder="Sales rep name" value={value.assigned_to} onChange={set('assigned_to')} /></label>
       <label>Stage
         <select value={value.stage} onChange={set('stage')}>
-          {[['new','New'],['qualified','Qualified'],['proposal','Proposal'],['negotiation','Negotiation'],['won','Won'],['lost','Lost']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+          {[['new', 'New'], ['qualified', 'Qualified'], ['proposal', 'Proposal'], ['negotiation', 'Negotiation'], ['won', 'Won'], ['lost', 'Lost']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
       </label>
       <label>Estimated Value (INR)<input type="number" min="0" placeholder="0" value={value.estimated_value} onChange={set('estimated_value')} /></label>
@@ -149,53 +160,59 @@ function LeadFormFields({ value, onChange }) {
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════════════════
 export default function App() {
-  const [theme,          setTheme]          = useState('dark')
-  const [screen,         setScreen]         = useState('loading')
-  const [view,           setView]           = useState(() => getViewFromHash())
-  const [user,           setUser]           = useState(null)
-  const [authMode,       setAuthMode]       = useState('signin')
-  const [authError,      setAuthError]      = useState('')
-  const [busy,           setBusy]           = useState(false)
+  const [theme, setTheme] = useState('dark')
+  const [screen, setScreen] = useState('loading')
+  const [view, setView] = useState(() => getViewFromHash())
+  const [user, setUser] = useState(null)
+  const [authMode, setAuthMode] = useState('signin')
+  const [authError, setAuthError] = useState('')
+  const [busy, setBusy] = useState(false)
 
   // leads — populated by real-time onSnapshot
-  const [leads,          setLeads]          = useState([])
-  const [leadsLoading,   setLeadsLoading]   = useState(false)
+  const [allLeads, setAllLeads] = useState([])
+  const [leadsLoading, setLeadsLoading] = useState(false)
 
   // forms
-  const [loginForm,      setLoginForm]      = useState({ username: '', password: '' })
-  const [signupForm,     setSignupForm]     = useState({ username: '', email: '', password: '', confirm_password: '' })
-  const [leadForm,       setLeadForm]       = useState(EMPTY_FORM)
-  const [editId,         setEditId]         = useState(null)
-  const [editForm,       setEditForm]       = useState(EMPTY_FORM)
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' })
+  const [signupForm, setSignupForm] = useState({ username: '', email: '', password: '', confirm_password: '' })
+  const [leadForm, setLeadForm] = useState(EMPTY_FORM)
+  const [editId, setEditId] = useState(null)
+  const [editForm, setEditForm] = useState(EMPTY_FORM)
 
   // stage drafts
-  const [stageDrafts,    setStageDrafts]    = useState({})
-  const [updatingId,     setUpdatingId]     = useState(null)
-  const [stageErr,       setStageErr]       = useState('')
+  const [stageDrafts, setStageDrafts] = useState({})
+  const [updatingId, setUpdatingId] = useState(null)
+  const [stageErr, setStageErr] = useState('')
 
   // logs
-  const [selectedLead,   setSelectedLead]   = useState(null)
-  const [logs,           setLogs]           = useState([])
-  const [logForm,        setLogForm]        = useState({ channel: 'email', note: '' })
-  const [logsBusy,       setLogsBusy]       = useState(false)
-  const [logsErr,        setLogsErr]        = useState('')
+  const [selectedLead, setSelectedLead] = useState(null)
+  const [logs, setLogs] = useState([])
+  const [logForm, setLogForm] = useState({ channel: 'email', note: '' })
+  const [logsBusy, setLogsBusy] = useState(false)
+  const [logsErr, setLogsErr] = useState('')
 
   // reminders
-  const [reminders,      setReminders]      = useState([])
-  const [remForm,        setRemForm]        = useState({ task: '', due_at: '' })
-  const [remBusy,        setRemBusy]        = useState(false)
-  const [remErr,         setRemErr]         = useState('')
+  const [reminders, setReminders] = useState([])
+  const [remForm, setRemForm] = useState({ task: '', due_at: '' })
+  const [remBusy, setRemBusy] = useState(false)
+  const [remErr, setRemErr] = useState('')
 
   // AI
-  const [aiPrompt,       setAiPrompt]       = useState('')
-  const [aiReply,        setAiReply]        = useState('')
-  const [aiChatBusy,     setAiChatBusy]     = useState(false)
-  const [aiErr,          setAiErr]          = useState('')
+  const [aiPrompt, setAiPrompt] = useState('')
+  const [aiReply, setAiReply] = useState('')
+  const [aiChatBusy, setAiChatBusy] = useState(false)
+  const [aiErr, setAiErr] = useState('')
+  const [textFilter, setTextFilter] = useState('')
+  const [stageFilter, setStageFilter] = useState('all')
+  const [minValFilter, setMinValFilter] = useState('')
+  const [maxValFilter, setMaxValFilter] = useState('')
+
+  const leads = allLeads;
 
   // unsubscribe refs
-  const leadsUnsub   = useRef(null)
-  const logsUnsub    = useRef(null)
-  const remUnsub     = useRef(null)
+  const leadsUnsub = useRef(null)
+  const logsUnsub = useRef(null)
+  const remUnsub = useRef(null)
 
   // ── Theme ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -214,10 +231,10 @@ export default function App() {
   // ── Dynamic page title ────────────────────────────────────────────────
   useEffect(() => {
     const titles = {
-      loading:   'SmartCRM',
-      landing:   'SmartCRM — Intelligent Lead Management',
-      auth:      authMode === 'signin' ? 'Sign In — SmartCRM' : 'Create Account — SmartCRM',
-      workspace: { pipeline: 'Pipeline', create: 'New Lead', edit: 'Edit Lead', reports: 'Reports', reminders: 'Reminders', logs: 'Logs', ai: 'AI Assistant' }[view] + ' — SmartCRM',
+      loading: 'SmartCRM',
+      landing: 'SmartCRM - Intelligent Lead Management',
+      auth: authMode === 'signin' ? 'Sign In - SmartCRM' : 'Create Account - SmartCRM',
+      workspace: { pipeline: 'Pipeline', create: 'New Lead', edit: 'Edit Lead', reports: 'Reports', reminders: 'Reminders', logs: 'Logs', ai: 'AI Assistant' }[view] + ' - SmartCRM',
     }
     document.title = titles[screen] || 'SmartCRM'
   }, [screen, view, authMode])
@@ -233,7 +250,7 @@ export default function App() {
         startLeadsSubscription()
       } else {
         setUser(null)
-        setLeads([])
+        setAllLeads([])
         stopLeadsSubscription()
         if (screen !== 'loading') setScreen('landing')
         else setScreen('landing')
@@ -265,7 +282,7 @@ export default function App() {
     stopLeadsSubscription()
     setLeadsLoading(true)
     leadsUnsub.current = leadApi.subscribe((newLeads) => {
-      setLeads(newLeads)
+      setAllLeads(newLeads)
       setLeadsLoading(false)
       setStageDrafts(Object.fromEntries(newLeads.map((l) => [l.id, l.stage])))
     })
@@ -294,23 +311,23 @@ export default function App() {
   const pipeline = useMemo(() => {
     const byStage = leads.reduce((a, l) => { a[l.stage] = (a[l.stage] || 0) + 1; return a }, {})
     return [
-      { label: 'New',         key: 'new',         value: byStage.new         || 0 },
-      { label: 'Qualified',   key: 'qualified',   value: byStage.qualified   || 0 },
-      { label: 'Proposal',    key: 'proposal',    value: byStage.proposal    || 0 },
+      { label: 'New', key: 'new', value: byStage.new || 0 },
+      { label: 'Qualified', key: 'qualified', value: byStage.qualified || 0 },
+      { label: 'Proposal', key: 'proposal', value: byStage.proposal || 0 },
       { label: 'Negotiation', key: 'negotiation', value: byStage.negotiation || 0 },
-      { label: 'Won',         key: 'won',         value: byStage.won         || 0 },
-      { label: 'Lost',        key: 'lost',        value: byStage.lost        || 0 },
+      { label: 'Won', key: 'won', value: byStage.won || 0 },
+      { label: 'Lost', key: 'lost', value: byStage.lost || 0 },
     ]
   }, [leads])
 
-  const totalValue    = useMemo(() => leads.reduce((s, l) => s + Number(l.estimated_value), 0), [leads])
-  const wonValue      = useMemo(() => leads.filter((l) => l.stage === 'won').reduce((s, l) => s + Number(l.estimated_value), 0), [leads])
-  const wonCount      = pipeline.find((i) => i.key === 'won').value
-  const lostCount     = pipeline.find((i) => i.key === 'lost').value
-  const convRate      = leads.length ? Math.round((wonCount / leads.length) * 100) : 0
-  const avgDeal       = leads.length ? totalValue / leads.length : 0
+  const totalValue = useMemo(() => leads.reduce((s, l) => s + Number(l.estimated_value), 0), [leads])
+  const wonValue = useMemo(() => leads.filter((l) => l.stage === 'won').reduce((s, l) => s + Number(l.estimated_value), 0), [leads])
+  const wonCount = pipeline.find((i) => i.key === 'won').value
+  const lostCount = pipeline.find((i) => i.key === 'lost').value
+  const convRate = leads.length ? Math.round((wonCount / leads.length) * 100) : 0
+  const avgDeal = leads.length ? totalValue / leads.length : 0
 
-  const srcBreakdown  = useMemo(() => {
+  const srcBreakdown = useMemo(() => {
     const g = leads.reduce((a, l) => { const s = l.source || 'Unknown'; a[s] = (a[s] || 0) + 1; return a }, {})
     return Object.entries(g).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value)
   }, [leads])
@@ -356,7 +373,7 @@ export default function App() {
 
   const onSignOut = async () => {
     await authApi.signOut()
-    setLeads([]); setView('pipeline')
+    setAllLeads([]); setView('pipeline')
     setLoginForm({ username: '', password: '' })
     setSignupForm({ username: '', email: '', password: '', confirm_password: '' })
   }
@@ -450,9 +467,9 @@ export default function App() {
         </button>
       </div>
       <nav className="topbar-nav">
-        {[['pipeline','Pipeline'],['reports','Reports'],['reminders','Reminders'],['logs','Logs']].map(([k,l]) => (
-          <button key={k} className={`nav-btn${view===k?' active':''}`}
-            onClick={() => { if(k==='reminders') openReminders(); else if(k==='logs') openLogs(); else setView(k) }}
+        {[['pipeline', 'Pipeline'], ['reports', 'Reports'], ['reminders', 'Reminders'], ['logs', 'Logs'], ['about', 'About']].map(([k, l]) => (
+          <button key={k} className={`nav-btn${view === k ? ' active' : ''}`}
+            onClick={() => { if (k === 'reminders') openReminders(); else if (k === 'logs') openLogs(); else setView(k) }}
             type="button">{l}</button>
         ))}
       </nav>
@@ -499,7 +516,7 @@ export default function App() {
             <span className="eyebrow">Intelligent Lead Management</span>
             <h1>Close more deals with<br />smarter pipeline control</h1>
             <p className="hero-desc">
-              SmartCRM unifies your entire sales operation — lead tracking, pipeline stages, follow-up reminders, communication logs, and AI-powered insights — in one clean workspace.
+              SmartCRM unifies your entire sales operation - lead tracking, pipeline stages, follow-up reminders, communication logs, and AI-powered insights - in one clean workspace.
             </p>
             <div className="hero-actions">
               <button className="cta-lg" onClick={() => openAuth('signup')} type="button">Start for Free</button>
@@ -516,27 +533,27 @@ export default function App() {
             <div className="feature-grid">
               {[
                 {
-                  svg: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>,
+                  svg: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /></svg>,
                   title: 'Pipeline Tracker', desc: 'Visualise every deal across New → Won in real time. Move stages with one click.'
                 },
                 {
-                  svg: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 8v4l3 3"/><circle cx="19" cy="5" r="3" fill="currentColor" stroke="none"/></svg>,
+                  svg: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a10 10 0 1 0 10 10" /><path d="M12 8v4l3 3" /><circle cx="19" cy="5" r="3" fill="currentColor" stroke="none" /></svg>,
                   title: 'AI Assistant', desc: 'Ask anything about your pipeline. Get strategy, email drafts, and risk analysis instantly.'
                 },
                 {
-                  svg: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>,
+                  svg: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" /></svg>,
                   title: 'Follow-up Reminders', desc: 'Never drop a lead. Set contextual reminders per deal and track completion.'
                 },
                 {
-                  svg: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
+                  svg: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>,
                   title: 'Communication Logs', desc: 'Log every call, email, and meeting. Instantly recall context before outreach.'
                 },
                 {
-                  svg: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>,
+                  svg: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17" /><polyline points="16 7 22 7 22 13" /></svg>,
                   title: 'Conversion Analytics', desc: 'Track win rates, average deal size, and source ROI with live charts.'
                 },
                 {
-                  svg: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+                  svg: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>,
                   title: 'Export Anytime', desc: 'Download your pipeline as CSV or PDF for reporting, sharing, or archiving.'
                 },
               ].map((f) => (
@@ -582,9 +599,9 @@ export default function App() {
             </div>
 
             <div className="auth-tabs">
-              <button id="tab-signin" className={`auth-tab${authMode==='signin'?' active':''}`}
+              <button id="tab-signin" className={`auth-tab${authMode === 'signin' ? ' active' : ''}`}
                 onClick={() => { setAuthMode('signin'); setAuthError('') }} type="button">Sign In</button>
-              <button id="tab-signup" className={`auth-tab${authMode==='signup'?' active':''}`}
+              <button id="tab-signup" className={`auth-tab${authMode === 'signup' ? ' active' : ''}`}
                 onClick={() => { setAuthMode('signup'); setAuthError('') }} type="button">Create Account</button>
             </div>
 
@@ -615,7 +632,7 @@ export default function App() {
             ) : (
               <>
                 <h1 className="auth-title">Create your account</h1>
-                <p className="auth-subtitle">Free to start — no credit card needed.</p>
+                <p className="auth-subtitle">Free to start - no credit card needed.</p>
                 <form onSubmit={onSignUp} className="auth-form">
                   <label>Full Name
                     <input id="signup-name" value={signupForm.username}
@@ -708,7 +725,7 @@ export default function App() {
         <header className="page-hdr panel">
           <div>
             <h1>Conversion Reports</h1>
-            <p className="muted">Live analytics from your pipeline — {leads.length} leads.</p>
+            <p className="muted">Live analytics from your pipeline - {leads.length} leads.</p>
           </div>
           <div className="hdr-actions">
             <button className="ghost-sm" onClick={() => downloadCSV(leads)} type="button">⬇ CSV</button>
@@ -810,7 +827,7 @@ export default function App() {
       <main className="crm">
         <TopBar />
         <header className="page-hdr panel">
-          <div><h1>Communication Logs</h1><p className="muted">Record every touchpoint per lead — synced live.</p></div>
+          <div><h1>Communication Logs</h1><p className="muted">Record every touchpoint per lead - synced live.</p></div>
         </header>
         <section className="panel">
           <div className="context-row">
@@ -830,7 +847,7 @@ export default function App() {
           <form className="inline-form entry-form" onSubmit={onCreateLog}>
             <label>Channel
               <select value={logForm.channel} onChange={(e) => setLogForm((p) => ({ ...p, channel: e.target.value }))}>
-                {['email','call','meeting','chat'].map((c) => <option key={c} value={c}>{c.charAt(0).toUpperCase()+c.slice(1)}</option>)}
+                {['email', 'call', 'meeting', 'chat'].map((c) => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
               </select>
             </label>
             <label className="full-inline">Note
@@ -865,18 +882,21 @@ export default function App() {
           <div><h1>AI Assistant</h1><p className="muted">Ask anything about your pipeline and get instant answers.</p></div>
         </header>
         <section className="panel">
-          <form className="ai-form" onSubmit={onAskAi}>
-            <label>Your question
-              <textarea
-                rows="5"
-                value={aiPrompt}
-                onChange={(e) => setAiPrompt(e.target.value)}
-                placeholder={'Examples:\n• Draft a follow-up email for deals in negotiation\n• Which leads are at highest risk?\n• Summarise my pipeline performance'}
-              />
-            </label>
-            <button className="cta" disabled={aiChatBusy} type="submit">
-              {aiChatBusy ? 'Thinking…' : '✦ Ask AI'}
-            </button>
+          <form className="ai-form" onSubmit={onAskAi} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', background: 'var(--surface)', padding: '1.5rem', borderRadius: '1rem', border: '1px solid var(--border)' }}>
+            <h2 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--text)' }}>How can I help you today?</h2>
+            <textarea
+              rows="5"
+              value={aiPrompt}
+              onChange={(e) => setAiPrompt(e.target.value)}
+              placeholder="Ask me anything about your contacts, pipeline risks, or draft an email..."
+              style={{ padding: '1rem', fontSize: '1rem', borderRadius: '0.5rem', border: '1px solid var(--border)', background: 'var(--bg)', resize: 'vertical' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '1rem' }}>
+              <p className="muted small" style={{ margin: 0 }}>Powered by CRM-AI</p>
+              <button className="cta" disabled={aiChatBusy || !aiPrompt.trim()} type="submit" style={{ padding: '0.6rem 1.5rem' }}>
+                {aiChatBusy ? 'Analyzing…' : '✦ Ask AI'}
+              </button>
+            </div>
           </form>
           {aiErr && <p className="error">{aiErr}</p>}
           {aiReply && (
@@ -905,6 +925,34 @@ export default function App() {
     )
   }
 
+  // ── About ─────────────────────────────────────────────────────────────
+  if (view === 'about') {
+    return (
+      <main className="crm">
+        <TopBar />
+        <header className="page-hdr panel">
+          <div><h1>About SmartCRM</h1><p className="muted">Learn more about this project.</p></div>
+        </header>
+        <section className="panel md-body" style={{ maxWidth: '800px', margin: '0 auto', padding: '2rem' }}>
+          <h2>SmartCRM Project Overview</h2>
+          <p>SmartCRM is a powerful, real-time lead management system designed to help you close more deals with smarter pipeline control.</p>
+
+          <h3>Key Features</h3>
+          <ul>
+            <li><strong>Pipeline Tracker:</strong> Visualise every deal across your sales funnel.</li>
+            <li><strong>AI Assistant:</strong> Seamlessly integrated Hugging Face AI to formulate strategy, draft emails, and analyse risk.</li>
+            <li><strong>Task Reminders &amp; Communication Logs:</strong> Keep track of every touchpoint and next step for all your leads.</li>
+            <li><strong>Real-time Synchronisation:</strong> Powered by Firebase, ensuring your data is up-to-date across all devices instantly.</li>
+            <li><strong>Global Search &amp; Filtering:</strong> Quickly find any lead across all modules.</li>
+          </ul>
+
+          <h3>Hosting &amp; Deployment</h3>
+          <p>This project is designed to be easily deployed on standard static web hosts (like Vercel, Netlify, or Firebase Hosting) while seamlessly integrating with Google Firebase and Hugging Face's serverless AI solutions. Making it perfectly compatible for both local environments and hosted production deployments.</p>
+        </section>
+      </main>
+    )
+  }
+
   // ── Pipeline (default) ────────────────────────────────────────────────
   return (
     <main className="crm">
@@ -914,7 +962,7 @@ export default function App() {
         <div>
           <span className="eyebrow-sm">Welcome back, {user?.username || 'there'}</span>
           <h1>Lead Pipeline</h1>
-          <p className="muted">{leads.length} lead{leads.length !== 1 ? 's' : ''} in your pipeline{leadsLoading ? ' — syncing…' : ''}</p>
+          <p className="muted">{leads.length} lead{leads.length !== 1 ? 's' : ''} in your pipeline{leadsLoading ? ' - syncing…' : ''}</p>
         </div>
         <div className="hdr-actions">
           <button className="ghost-sm" onClick={() => downloadCSV(leads)} type="button" title="Export CSV">⬇ CSV</button>
@@ -946,7 +994,44 @@ export default function App() {
 
       {/* Leads table */}
       <section className="panel">
-        <h2>All Leads</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem', flexWrap: 'wrap', gap: '1rem' }}>
+          <h2 style={{ margin: 0 }}>All Leads</h2>
+          <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', alignItems: 'center' }}>
+            <input
+              type="text"
+              placeholder="Search by name, email..."
+              value={textFilter}
+              onChange={(e) => setTextFilter(e.target.value)}
+              style={{ minWidth: '180px', margin: 0 }}
+            />
+            <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} style={{ margin: 0 }}>
+              <option value="all">All Stages</option>
+              <option value="new">New</option>
+              <option value="qualified">Qualified</option>
+              <option value="proposal">Proposal</option>
+              <option value="negotiation">Negotiation</option>
+              <option value="won">Won</option>
+              <option value="lost">Lost</option>
+            </select>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <input
+                type="number"
+                placeholder="Min ₹"
+                value={minValFilter}
+                onChange={(e) => setMinValFilter(e.target.value)}
+                style={{ width: '100px', margin: 0 }}
+              />
+              <span className="muted" style={{ margin: 0 }}>-</span>
+              <input
+                type="number"
+                placeholder="Max ₹"
+                value={maxValFilter}
+                onChange={(e) => setMaxValFilter(e.target.value)}
+                style={{ width: '100px', margin: 0 }}
+              />
+            </div>
+          </div>
+        </div>
         {!leads.length && !leadsLoading && (
           <p className="empty-state">No leads yet. Click "+ New Lead" to add your first prospect.</p>
         )}
@@ -961,7 +1046,22 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {leads.map((lead) => (
+                {leads.filter((l) => {
+                  let pass = true;
+                  if (stageFilter !== 'all') pass = pass && l.stage === stageFilter;
+                  const val = Number(l.estimated_value || 0);
+                  if (minValFilter !== '') pass = pass && val >= Number(minValFilter);
+                  if (maxValFilter !== '') pass = pass && val <= Number(maxValFilter);
+                  if (textFilter) {
+                    const term = textFilter.toLowerCase();
+                    pass = pass && (
+                      (l.company_name || '').toLowerCase().includes(term) ||
+                      (l.contact_name || '').toLowerCase().includes(term) ||
+                      (l.contact_email || '').toLowerCase().includes(term)
+                    );
+                  }
+                  return pass;
+                }).map((lead) => (
                   <tr key={lead.id}>
                     <td>
                       <strong>{lead.company_name}</strong>
@@ -971,10 +1071,10 @@ export default function App() {
                       {lead.contact_name}
                       {lead.contact_email && <small>{lead.contact_email}</small>}
                     </td>
-                    <td><span className="src-tag">{lead.source || '—'}</span></td>
+                    <td><span className="src-tag">{lead.source || '-'}</span></td>
                     <td><span className={`tag ${lead.stage}`}>{lead.stage}</span></td>
                     <td>{toMoney(lead.estimated_value)}</td>
-                    <td>{lead.last_touch || '—'}</td>
+                    <td>{lead.last_touch || '-'}</td>
                     <td>
                       <div className="row-actions">
                         <select
@@ -982,7 +1082,7 @@ export default function App() {
                           value={stageDrafts[lead.id] || lead.stage}
                           onChange={(e) => setStageDrafts((p) => ({ ...p, [lead.id]: e.target.value }))}
                         >
-                          {[['new','New'],['qualified','Qualified'],['proposal','Proposal'],['negotiation','Negotiation'],['won','Won'],['lost','Lost']].map(([v,l]) => (
+                          {[['new', 'New'], ['qualified', 'Qualified'], ['proposal', 'Proposal'], ['negotiation', 'Negotiation'], ['won', 'Won'], ['lost', 'Lost']].map(([v, l]) => (
                             <option key={v} value={v}>{l}</option>
                           ))}
                         </select>

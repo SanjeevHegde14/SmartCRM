@@ -248,11 +248,16 @@ export const aiApi = {
 
         const fullPrompt = prompt + ctx
 
-        const response = await fetch(`${AI_BASE}/v1/chat/completions`, {
+        const response = await fetch(`${AI_BASE}/generate`, {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({ 
-                messages: [{ role: 'user', content: fullPrompt }] 
+                user_prompt: fullPrompt,
+                system_prompt: 'You are a highly capable AI assistant built for a CRM. Provide all responses in strictly well-formatted Markdown. DO NOT use markdown tables under any circumstances. Present data rows logically using bullet points or numbered lists ONLY. Ensure proper spacing, bold headings, and easily readable indentation.',
+                max_new_tokens: 512,
+                temperature: 0.2,
+                top_p: 0.95,
+                repetition_penalty: 1.05
             }),
         })
 
@@ -262,7 +267,7 @@ export const aiApi = {
         }
 
         const data = await response.json()
-        const reply = data.choices?.[0]?.message?.content || data.reply || data.response || data.generated_text || data.output || ''
+        const reply = data.response || data.reply || data.generated_text || data.output || data.choices?.[0]?.message?.content || ''
         return { reply }
     },
 }
